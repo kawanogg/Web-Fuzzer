@@ -1,0 +1,101 @@
+import subprocess
+import threading
+import queue
+import re
+import argparse
+
+# Define a queue to handle stopping FFUF when a valid vhost is found
+ffuf_stop_queue = queue.Queue()
+
+def run_gobuster(domain, wordlist, threads, blacklist_codes, extensions):
+    """Runs Gobuster for directory brute-forcing."""
+    gobuster_cmd = [
+        "gobuster", "dir",
+        "-e",
+        "-u", f"http://{domain}/en/",
+        "-w", wordlist,
+        "-t", str(threads),
+        "--follow-redirect", "--quiet",
+        "-o", "dirBrute.txt"
+    ]
+
+    if blacklist_codes:
+        gobuster_cmd.extend(["-b", blacklist_codes])
+
+    if extensions:
+        gobuster_cmd.extend(["-x", extensions])
+
+    print("[+] Starting Gobuster...")
+    try:
+        subprocess.run(gobuster_cmd)
+    except FileNotFoundError:
+        print("[-] Gobuster not found. Make sure it is installed and in your PATH.")
+
+def run_ffuf(domain, vhost_wordlist, threads, blacklist_codes):
+    """Runs FFUF for virtual host enumeration."""
+    ffuf_cmd = [
+        "ffuf",
+        "-u", f"http://{domain}",
+        "-H", "Host: FUZZ." + domain,
+        "-w", vhost_wordlist,
+        "-t", str(threads),
+        "-mc", "200",
+    ]
+
+    if blacklist_codes:
+        ffuf_cmd.extend(["-fc", blacklist_codes])
+
+    print("[+] Starting FFUF...")
+
+    try:
+        process = subprocess.Popen(ffuf_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        while True:
+            line = process.stdout.readline()
+            if not line and process.poll() is not None:
+                break
+
+            decoded_line = line.decode("utf-8").strip()
+            print(decoded_line)
+
+            # Check if a valid vhost is found
+            if re.search(r"\[Status: 200\]", decoded_line):
+                print("[+] Valid vhost found! Stopping FFUF...")
+                ffuf_stop_queue.put(True)
+                process.terminate()
+                break
+
+            # Stop FFUF if requested
+            if not ffuf_stop_queue.empty():
+                process.terminate()
+                break
+
+    except FileNotFoundError:
+        print("[-] FFUF not found. Make sure it is installed and in your PATH.")
+
+def main():
+    parser = argparse.ArgumentParser(description="Run Gobuster and FFUF in parallel.")
+    parser.add_argument("-d", "--domain", required=True, help="Target domain (e.g., example.com)")
+    parser.add_argument("-gw", "--gobuster-wordlist", required=True, help="Path to Gobuster wordlist")
+    parser.add_argument("-fw", "--ffuf-wordlist", required=True, help="Path to FFUF vhost wordlist")
+    parser.add_argument("-t", "--threads", type=int, default=10, help="Number of threads to use for both tools (default: 10)")
+    parser.add_argument("-bl", "--blacklist-codes", help="Comma-separated HTTP status codes to blacklist (e.g., 404,403)")
+    parser.add_argument("-x", "--extensions", help="Comma-separated file extensions to append to each request in Gobuster (e.g., .php,.html)")
+
+    args = parser.parse_args()
+
+    # Create threads for parallel execution
+    gobuster_thread = threading.Thread(target=run_gobuster, args=(args.domain, args.gobuster_wordlist, args.threads, args.blacklist_codes, args.extensions))
+    ffuf_thread = threading.Thread(target=run_ffuf, args=(args.domain, args.ffuf_wordlist, args.threads, args.blacklist_codes))
+
+    # Start threads
+    gobuster_thread.start()
+    ffuf_thread.start()
+
+    # Wait for both threads to finish
+    gobuster_thread.join()
+    ffuf_thread.join()
+
+    print("[+] Execution completed.")
+
+if __name__ == "__main__":
+    main()
