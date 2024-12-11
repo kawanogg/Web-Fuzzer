@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+
+import re
+import requests
+from langdetect import detect, DetectorFactory
+
+# Fixar resultados consistentes da detecção
+DetectorFactory.seed = 0
+
+# Cores ANSI
+VERDE = "\033[0;32m"
+VERMELHO = "\033[0;31m"
+AZUL = "\033[0;34m"
+AMARELO = "\033[0;33m"
+RESET = "\033[0m"
+
+print(f"{VERMELHO}")
+print("▓█████ ▒██   ██▒ ▄▄▄       ███▄ ▄███▓ █     █░ ██▀███  ")
+print("▓█   ▀ ▒▒ █ █ ▒░▒████▄    ▓██▒▀█▀ ██▒▓█░ █ ░█░▓██ ▒ ██▒")
+print("▒███   ░░  █   ░▒██  ▀█▄  ▓██    ▓██░▒█░ █ ░█ ▓██ ░▄█ ▒")
+print("▒▓█  ▄  ░ █ █ ▒ ░██▄▄▄▄██ ▒██    ▒██ ░█░ █ ░█ ▒██▀▀█▄  ")
+print("░▒████▒▒██▒ ▒██▒ ▓█   ▓██▒▒██▒   ░██▒░░██▒██▓ ░██▓ ▒██▒")
+print("░░ ▒░ ░▒▒ ░ ░▓ ░ ▒▒   ▓▒█░░ ▒░   ░  ░░ ▓░▒ ▒  ░ ▒▓ ░▒▓░")
+print(" ░ ░  ░░░   ░▒ ░  ▒   ▒▒ ░░  ░      ░  ▒ ░ ░    ░▒ ░ ▒░")
+print("   ░    ░    ░    ░   ▒   ░      ░     ░   ░    ░░   ░ ")
+print("   ░  ░ ░    ░        ░  ░       ░       ░       ░     ")
+print("                                                       ")
+print(f"{RESET}")
+
+def detectar_urls_comentadas(html):
+    """
+    Detecta URLs dentro de comentários HTML no código-fonte.
+    """
+    comentarios = re.findall(r'<!--(.*?)-->', html, re.DOTALL)
+    urls_comentadas = []
+    for comentario in comentarios:
+        urls = re.findall(r'http[s]?://[^\s>]+', comentario)
+        urls_comentadas.extend(urls)
+    return urls_comentadas
+
+def detectar_frases_em_portugues(html):
+    """
+    Detecta frases completas em português no código-fonte.
+    """
+    textos = re.findall(r'>([^<]+)<', html)
+    frases_em_portugues = []
+    
+    for texto in textos:
+        texto = texto.strip()
+        if texto:
+            try:
+                idioma = detect(texto)
+                if idioma == "pt":  # Verifica se o texto é em português
+                    frases_em_portugues.append(texto)
+            except Exception:
+                pass  # Ignorar erros de detecção
+    
+    return frases_em_portugues
+
+def detectar_palavras_chave(html):
+    """
+    Detecta frases contendo palavras-chave como 'senha', 'login', etc.
+    dentro de comentários HTML ou elementos ocultos.
+    """
+    palavras_chave = ["senha", "pass", "login", "credenciais", "credencial", "user", "usuario"]
+    regex_palavras_chave = r'\b(?:' + '|'.join(palavras_chave) + r')\b'
+
+    resultados = []
+
+    # Detectar em comentários HTML
+    comentarios = re.findall(r'<!--(.*?)-->', html, re.DOTALL)
+    for comentario in comentarios:
+        if re.search(regex_palavras_chave, comentario, re.IGNORECASE):
+            resultados.append(f"(Comentário): {comentario.strip()}")
+
+    # Detectar em elementos com style="display: none"
+    elementos_display_none = re.findall(
+        r'<[^>]*style=["\'][^"\'>]*display\s*:\s*none[^"\'>]*["\'][^>]*>(.*?)</[^>]*>',
+        html,
+        re.DOTALL,
+    )
+    for elemento in elementos_display_none:
+        if re.search(regex_palavras_chave, elemento, re.IGNORECASE):
+            resultados.append(f"(Oculto - display:none): {elemento.strip()}")
+
+    # Detectar em elementos com atributo hidden
+    elementos_hidden = re.findall(
+        r'<[^>]*hidden[^>]*>(.*?)</[^>]*>',
+        html,
+        re.DOTALL,
+    )
+    for elemento in elementos_hidden:
+        if re.search(regex_palavras_chave, elemento, re.IGNORECASE):
+            resultados.append(f"(Oculto - hidden): {elemento.strip()}")
+
+    return resultados
+
+def main(url):
+    print(f"{AZUL}Acessando {url}...{RESET}")
+    
+    try:
+        # Fazendo o download do conteúdo HTML
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        html = response.text
+    except requests.RequestException as e:
+        print(f"{VERMELHO}Erro ao acessar a URL: {e}{RESET}")
+        return
+
+    # Detectar URLs comentadas
+    urls_comentadas = detectar_urls_comentadas(html)
+    if urls_comentadas:
+        print(f"\n{AMARELO}URLs comentadas encontradas:{RESET}")
+        for url in urls_comentadas:
+            print(f"{VERDE}- {url}{RESET}")
+    else:
+        print(f"\n{VERMELHO}Nenhuma URL comentada encontrada.{RESET}")
+
+    # Detectar frases em português
+    frases_em_portugues = detectar_frases_em_portugues(html)
+    if frases_em_portugues:
+        print(f"\n{AMARELO}Frases em português encontradas:{RESET}")
+        for frase in frases_em_portugues:
+            print(f"{VERDE}- {frase}{RESET}")
+    else:
+        print(f"\n{VERMELHO}Nenhuma frase em português encontrada.{RESET}")
+
+    # Detectar palavras-chave em comentários e elementos ocultos
+    palavras_chave_encontradas = detectar_palavras_chave(html)
+    if palavras_chave_encontradas:
+        print(f"\n{AMARELO}Frases com palavras-chave em comentários ou elementos ocultos:{RESET}")
+        for frase in palavras_chave_encontradas:
+            print(f"{VERDE}- {frase}{RESET}")
+    else:
+        print(f"\n{VERMELHO}Nenhuma frase com palavras-chave encontrada em comentários ou elementos ocultos.{RESET}")
+
+if __name__ == "__main__":
+    url_alvo = input(f"{AZUL}Digite a URL que deseja analisar: {RESET}").strip()
+    main(url_alvo)
