@@ -42,6 +42,8 @@ def run_ffuf(domain, vhost_wordlist, threads, blacklist_codes):
         "-w", vhost_wordlist,
         "-t", str(threads),
         "-mc", "200",
+        "-v"
+        "-c"
     ]
 
     if blacklist_codes:
